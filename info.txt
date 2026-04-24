@@ -1,0 +1,13 @@
+name = Titanfall 2 Movement
+author = TheAllingAlls
+description = An attempt at a faithful recreation of Titanfall 2's movement system, in Teardown style. By movement system, I mean wallrunning, double jumping, sliding, and all the little quirks the original game had, translated by hand as best I could. --MORE--
+tags = Tool,Gameplay
+version = 2
+
+# If description contains [noupload] the description on Steam workshop will not be overwritten.
+# Available tags (comma-separated):
+# Map      - A custom map with no particular gameplay
+# Gameplay - Mod has a mission, objective or other gameplay
+# Asset    - A collection of assets for others to use
+# Vehicle  - Mod contains drivable, custom vehicles
+# Tool     - Mod adds a custom weapon or other tool
