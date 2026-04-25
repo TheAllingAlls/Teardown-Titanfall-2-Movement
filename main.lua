@@ -4,13 +4,38 @@
 --Modding documentation: http://teardowngame.com/modding
 --API reference: http://teardowngame.com/modding/api.html
 
+function server.GetLocalPlayer(player)
+    ServerLocalPlayer = player
+end
+
 function server.init()
 end
 
-function server.tick(dt)
+function server.tick(delta)
+    PlayerVelocity = GetEvent("PlayerVelocity",1)
+    JumpKitCall = GetEvent("JumpKitCall",1)
+    SlideBoostCall = GetEvent("SlideBoostCall",1)
+    SlideCall = GetEvent("SlideCall",1)
+    PreserveAirMomentumCall = GetEvent("PreserveAirMomentumCall",1)
+    PreventFallDamageCall = GetEvent("PreventFallDamageCall",1)
+    if JumpKitCall then
+        server.playerJumpKit()
+    end
+    if SlideBoostCall then
+        server.playerSlideBoost()
+    end
+    if SlideCall then
+        server.playerSlide()
+    end
+    if PreserveAirMomentumCall then
+        server.playerPreserveAirMomentum()
+    end
+    if PreventFallDamageCall then
+        server.playerPreventFallDamage()
+    end
 end
 
-function server.update(dt)
+function server.update(delta)
 end
 
 function client.init()
@@ -45,6 +70,9 @@ function client.player_controller_init()
     LightBlue = {r=0.1,g=0.1,b=1,a=1}
     LightGreen = {r=0.1,g=1,b=0.1,a=1}
     Orange = {r=1,g=0.5,b=0,a=1}
+
+    LocalPlayer = GetLocalPlayer()
+    ServerCall("server.GetLocalPlayer", LocalPlayer)
 end
 function client.player_controller_render(delta)
     local pos = SelectedTransform.pos
@@ -69,6 +97,10 @@ end
 function client.player_controller_postUpdate()
 end
 function client.player_controller_tick(delta)
+    DeltaTick = GetTimeStep()
+    PlayerVelocity = GetPlayerVelocity(0)
+    PostEvent("PlayerVelocity",PlayerVelocity)
+
     FallCheck() --Attempt to basically disable fall damage
     JumpKit() --Double jump, includes coyote jumping and velocity changes on air jumps
     Sliding() --Basic sliding, plus the slide boost with a two-second cooldown
@@ -120,6 +152,7 @@ function LookForWalls()
     DebugWatch("CastHitPosition",CastHitPosition,false)
 end
 
+JumpKitCall = false
 JumpState = 0
 MaxAirJumps = 1
 AirJumps = 0
@@ -133,12 +166,8 @@ ForceDirection = Vec(0,0,0)
 ForceMultiplierDefault = 6
 ForceMultiplier = Vec(ForceMultiplierDefault, 0, ForceMultiplierDefault)
 function JumpKit()
-    local delta = GetTimeStep()
-
-    local player = GetLocalPlayer()
     Up = GetPlayerUp(0)
-    local playerVelocity = GetPlayerVelocity(0)
-    local playerVelocityLengthXZ = VecLength(Vec(playerVelocity[1],0,playerVelocity[3]))
+    local playerVelocityLengthXZ = VecLength(Vec(PlayerVelocity[1],0,PlayerVelocity[3]))
     local eyeTransform = GetPlayerEyeTransform(0)
     local playerTransform = GetPlayerTransform(0)
     local baseTransform = Transform(Vec(0,0,0),playerTransform.rot)
@@ -181,13 +210,13 @@ function JumpKit()
         PreForceDir[2] = 0.0
     end
     ForceDir = Vec(0,0,0)
-    DebugWatch("X Velocity", playerVelocity[1], false)
-    DebugWatch("Z Velocity", playerVelocity[3], false)
-    DebugWatch("XZ Velocity Length", playerVelocityLengthXZ, false)
+    -- DebugWatch("X Velocity", playerVelocity[1], false)
+    -- DebugWatch("Z Velocity", playerVelocity[3], false)
+    -- DebugWatch("XZ Velocity Length", playerVelocityLengthXZ, false)
     for i = 0, table.maxn(ForceMultiplier), 1 do
         if ForceMultiplier[i] then
             if i ~= 2 then
-                if playerVelocity[i] > 0 then
+                if PlayerVelocity[i] > 0 then
                     if ForceDirection[i] > 0 then
                         if playerVelocityLengthXZ > ForceMultiplierDefault+1 then
                             ForceMultiplier[i] = 0
@@ -198,7 +227,7 @@ function JumpKit()
                     else
                         ForceMultiplier[i] = ForceMultiplierDefault
                     end
-                elseif playerVelocity[i] < 0 then
+                elseif PlayerVelocity[i] < 0 then
                     if ForceDirection[i] < 0 then
                         if playerVelocityLengthXZ > ForceMultiplierDefault+1 then
                             ForceMultiplier[i] = 0
@@ -227,7 +256,7 @@ function JumpKit()
     else
         if JumpState == 0 then
             if JumpBuffer > 0.0 then
-                JumpBuffer = JumpBuffer - delta
+                JumpBuffer = JumpBuffer - DeltaTick
             end
         end
         if JumpBuffer <= 0.0 then
@@ -267,7 +296,8 @@ function JumpKit()
                     ForceDir = Vec(0,0,0)
                     Force = 0
                 end
-                ServerCall("server.setPlayerVelocity", player, playerVelocity, ForceDir, Force)
+                JumpKitCall = true
+                PostEvent("JumpKitCall",JumpKitCall)
                 if IsPlayerGrounded(0) == false then
                     AirJumps = AirJumps - 1
                     if JumpBuffer > 0.0 and JumpBuffer ~= JumpBufferMax then
@@ -279,55 +309,188 @@ function JumpKit()
             end
         end
     end
+    PostEvent("ForceDir",ForceDir)
+    PostEvent("Force",Force)
     -- DebugWatch("AirJumps",AirJumps,false)
     -- DebugWatch("JumpBuffer",JumpBuffer,false)
     -- DebugWatch("JumpState",JumpState,false)
-    DebugWatch("ForceDir",ForceDir,false)
+    -- DebugWatch("ForceDir",ForceDir,false)
 end
-function server.setPlayerVelocity(playerId, playerVelocity, forceDir, force)
-    local newVelocity = Vec((playerVelocity[1]*-(force-1)) + forceDir[1], (playerVelocity[2]*AirJumps) + (JumpVelocity+(AirJumps*5)), (playerVelocity[3]*-(force-1)) + forceDir[3])
-    SetPlayerVelocity(newVelocity, playerId)
-    -- DebugWatch("server.ForceDir",forceDir,false)
+function server.playerJumpKit()
+    JumpKitCall = false
+    ForceDir = GetEvent("ForceDir",1)
+    Force = GetEvent("Force",1)
+    local newVelocity = Vec((PlayerVelocity[1]*-(Force-1)) + ForceDir[1], (PlayerVelocity[2]*AirJumps) + (JumpVelocity+(AirJumps*5)), (PlayerVelocity[3]*-(Force-1)) + ForceDir[3])
+    SetPlayerVelocity(newVelocity, ServerLocalPlayer)
+    -- DebugWatch("server.ForceDir",ForceDir,false)
     -- DebugWatch("","Applying Jumpkit boost...",false)
 end
 
-SlideCooldownMax = 2.0
-SlideCooldown = SlideCooldownMax
-SlideReady = 0
+SlideBoostCall = false
+SlideCall = false
+PreserveAirMomentumCall = false
+MinimumCrouchDefault = 0.01
+MinimumCrouch = MinimumCrouchDefault
+CrouchResetThresholdDefault = MinimumCrouch*0.9
+CrouchResetThreshold = CrouchResetThresholdDefault
+FullCrouch = 0.9
+CanSlideBoost = false
+CanSlide = false
+SlideBoostCooldownMax = 2.0
+SlideBoostCooldown = SlideBoostCooldownMax
+SlideBoostReady = 0
+SlideBoostMultiplier = 1.1
+SlideBoostInputMultiplier = 0
+IsSliding = false
+SlideVelocity = Vec(0,0,0)
+SlideVelocityDecayMultiplier = 0.995
+AirMomentumMultiplier = 1.05
+SlideCallFrequencyMax = 0.1
+SlideCallFrequency = SlideCallFrequencyMax
 function Sliding()
+    SlideBoostInputMultiplier = InputValue("up",0)
+    PostEvent("SlideBoostInputMultiplier",SlideBoostInputMultiplier)
+    local crouch = GetPlayerCrouch(0)
+    local grounded = IsPlayerGrounded(0)
+
     if InputValue("up",0) > 0 then
-        if SlideReady ~= 2 then
-            SlideReady = 1
+        if SlideBoostReady ~= 2 then
+            SlideBoostReady = 1
         end
     else
-        SlideReady = 0
+        if SlideBoostReady ~= 2 then
+            SlideBoostReady = 0
+        end
+    end
+    if SlideBoostReady == 2 then
+        MinimumCrouch = 0.5
+        CrouchResetThreshold = 0.4
+        if SlideBoostCooldown > 0.0 then
+            SlideBoostCooldown = SlideBoostCooldown - DeltaTick
+        else
+            if crouch < CrouchResetThreshold then
+                SlideBoostReady = 0
+            end
+        end
+    else
+        SlideBoostCooldown = SlideBoostCooldownMax
+        -- MinimumCrouch = MinimumCrouchDefault
+        -- CrouchResetThreshold = CrouchResetThresholdDefault
+    end
+    if crouch > MinimumCrouch and crouch < FullCrouch and grounded == true then
+        CanSlideBoost = true
+    else
+        CanSlideBoost = false
+    end
+    if crouch > MinimumCrouch and grounded == true then
+        CanSlide = true
+    else
+        CanSlide = false
+    end
+    if VecLength(PlayerVelocity) <= 0.75 then
+        IsSliding = false
+    elseif grounded == true and CanSlide == false then
+        IsSliding = false
+    end
+
+    if SlideBoostReady == 1 then
+        if CanSlideBoost == true then
+            SlideVelocity = PlayerVelocity
+            SlideBoostCall = true
+            PostEvent("SlideBoostCall",SlideBoostCall)
+            IsSliding = true
+            SlideBoostReady = 2
+        end
+    elseif SlideBoostReady ~= 0 then
+        if CanSlide == true then
+            if IsSliding == true then
+                SlideCall = true
+                PostEvent("SlideCall",SlideCall)
+            else
+                SlideVelocity = PlayerVelocity
+                IsSliding = true
+            end
+        end
+    end
+    if grounded == false then
+        if IsSliding == true then
+            SlideCallFrequency = SlideCallFrequency - DeltaTick
+            if SlideCallFrequency <= 0 then
+                PreserveAirMomentumCall = true
+                PostEvent("PreserveAirMomentumCall",PreserveAirMomentumCall)
+                SlideCallFrequency = SlideCallFrequencyMax
+            end
+        end
+    end
+
+    if crouch > MinimumCrouch then
+        -- DebugWatch("Crouch",crouch,false)
     end
     if VecLength(ForceDir) > 0 then
-        DebugWatch("ForceDir from JumpKit()",ForceDir,false)
+        -- DebugWatch("ForceDir from JumpKit()",ForceDir,false)
     end
+    -- DebugWatch("SlideBoostReady",SlideBoostReady,false)
+    -- DebugWatch("SlideBoostCooldown",SlideBoostCooldown,false)
+    -- DebugWatch("IsSliding",IsSliding,false)
+    -- DebugWatch("Velocity",playerVelocity,false)
+    -- DebugWatch("SlideVelocity",SlideVelocity,false)
+end
+function server.playerSlideBoost()
+    SlideBoostCall = false
+    SlideBoostInputMultiplier = GetEvent("SlideBoostInputMultiplier",1)
+    local newVelocity = Vec(PlayerVelocity[1] + ((PlayerVelocity[1]*SlideBoostMultiplier)*SlideBoostInputMultiplier), 0, PlayerVelocity[3] + ((PlayerVelocity[3]*SlideBoostMultiplier)*SlideBoostInputMultiplier))
+    SlideVelocity = newVelocity
+    SetPlayerVelocity(newVelocity, ServerLocalPlayer)
+    -- DebugWatch("server.playerSlideBoost Velocity",newVelocity,false)
+    -- DebugWatch("","Applying Jumpkit forward momentum...",false)
+end
+function server.playerSlide()
+    SlideCall = false
+    local velocityLength = VecLength(PlayerVelocity)
+    local slideVelocityLength = VecLength(SlideVelocity)
+    SlideVelocity = VecScale(SlideVelocity, SlideVelocityDecayMultiplier)
+    if velocityLength < slideVelocityLength then
+        SlideVelocity = PlayerVelocity
+    end
+    local newVelocity = Vec(SlideVelocity[1], 0, SlideVelocity[3])
+    SetPlayerGroundVelocity(newVelocity, ServerLocalPlayer)
+    -- DebugWatch("server.PlayerSlide Velocity",newVelocity,false)
+end
+function server.playerPreserveAirMomentum()
+    PreserveAirMomentumCall = false
+    local newVelocity = Vec(PlayerVelocity[1]*AirMomentumMultiplier, PlayerVelocity[2], PlayerVelocity[3]*AirMomentumMultiplier)
+    SetPlayerVelocity(newVelocity, ServerLocalPlayer)
+    -- DebugWatch("","Applying Jumpkit forward momentum to air...",false)
 end
 
+PreventFallDamageCall = false
 FallCheckDir = Vec(0,-1,0)
 FallCheckDistanceMultiplier = 0.4
 FallCheckCastRadius = 1
 FallCheckCast = {hit=false,dist=0,normal=Vec(),shape=0}
 FallMaxVelocity = -10
 FallVelocityMultiplier = 0.99
+FallCheckCallFrequencyMax = 0.001
+FallCheckCallFrequency = FallCheckCallFrequencyMax
 function FallCheck()
-    local player = GetLocalPlayer()
-    local playerVelocity = GetPlayerVelocity(0)
     local playerTransform = GetPlayerTransform(0)
-    if playerVelocity[2] < FallMaxVelocity then
-        FallCheckCast.hit,FallCheckCast.dist,FallCheckCast.normal,FallCheckCast.shape = QueryRaycast(playerTransform.pos, FallCheckDir, -playerVelocity[2]*FallCheckDistanceMultiplier, FallCheckCastRadius, false)
+    if PlayerVelocity[2] < FallMaxVelocity then
+        FallCheckCast.hit,FallCheckCast.dist,FallCheckCast.normal,FallCheckCast.shape = QueryRaycast(playerTransform.pos, FallCheckDir, -PlayerVelocity[2]*FallCheckDistanceMultiplier, FallCheckCastRadius, false)
         if FallCheckCast.hit == true then
-            ServerCall("server.preventFallDamage", player, playerVelocity)
-            -- DebugWatch("","Applying Jumpkit hover...",false)
+            FallCheckCallFrequency = FallCheckCallFrequency - DeltaTick
+            if FallCheckCallFrequency <= 0 then
+                PreventFallDamageCall = true
+                PostEvent("PreventFallDamageCall",PreventFallDamageCall)
+                FallCheckCallFrequency = FallCheckCallFrequencyMax
+            end
         end
+        -- DebugLine(playerTransform.pos, VecAdd(playerTransform.pos, VecScale(FallCheckDir, FallCheckCast.dist)), Pink.r, Pink.g, Pink.b, 1)
+        -- DebugWatch("Y Velocity",playerVelocity[2],false)
+        -- DebugWatch("FallCheckCast",FallCheckCast,false)
     end
-    -- DebugLine(playerTransform.pos, VecAdd(playerTransform.pos, VecScale(FallCheckDir, FallCheckCast.dist)), Pink.r, Pink.g, Pink.b, 1)
-    -- DebugWatch("Y Velocity",playerVelocity[2],false)
-    -- DebugWatch("FallCheckCast",FallCheckCast,false)
 end
-function server.preventFallDamage(playerId, playerVelocity)
-    SetPlayerVelocity(Vec(playerVelocity[1], playerVelocity[2]*FallVelocityMultiplier, playerVelocity[3]), playerId)
+function server.playerPreventFallDamage()
+    PreventFallDamageCall = false
+    SetPlayerVelocity(Vec(PlayerVelocity[1], PlayerVelocity[2]*FallVelocityMultiplier, PlayerVelocity[3]), ServerLocalPlayer)
+    -- DebugWatch("","Applying Jumpkit hover...",false)
 end
