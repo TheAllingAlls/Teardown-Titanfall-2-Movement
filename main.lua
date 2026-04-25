@@ -71,7 +71,53 @@ end
 function client.player_controller_tick(delta)
     FallCheck() --Attempt to basically disable fall damage
     JumpKit() --Double jump, includes coyote jumping and velocity changes on air jumps
+    Sliding() --Basic sliding, plus the slide boost with a two-second cooldown
     LookForWalls() --Wallrunning
+end
+
+function LookForWalls()
+    LookDistance = 5
+    OriginOffset = 1 - (GetPlayerCrouch(0)/2)
+    EyeTransform = GetPlayerEyeTransform(0)
+    PlayerTransform = GetPlayerTransform(0)
+    SelectedTransform = PlayerTransform
+    SelectedTransform = Transform(Vec(SelectedTransform.pos[1], SelectedTransform.pos[2] + OriginOffset, SelectedTransform.pos[3]), SelectedTransform.rot)
+
+    IsOccupied = 0 --Whether or not player is occupied with a current shape
+    CurrentOccupant = 0
+    Forward = Vec(0, 0, -LookDistance)
+    Left = Vec(LookDistance, 0, 0)
+    Right = Vec(-LookDistance, 0, 0)
+    Back = Vec(0, 0, LookDistance)
+    LookDirection = TransformToParentPoint(SelectedTransform, Forward)
+    LeftDirection = TransformToParentPoint(SelectedTransform, Left)
+    RightDirection = TransformToParentPoint(SelectedTransform, Right)
+    BackDirection = TransformToParentPoint(SelectedTransform, Back)
+    CastDirections = {Forward,Left,Right,Back}
+    CastInfo = {hit=false, distance=0, normal=Vec(0,0,0), shape=0}
+    CastDirection = Vec(0,0,0)
+    CastHitPosition = Vec(0,0,0)
+    CastHitNormal = Vec(0,0,0)
+
+    for i = 1, table.maxn(CastDirections), 1 do
+        CastInfo.hit,CastInfo.distance,CastInfo.normal,CastInfo.shape = QueryRaycast(SelectedTransform.pos, CastDirections[i], LookDistance, 0, false)
+        if CastInfo.hit == true then
+            CastDirection = CastDirections[i]
+        else
+            CastDirection = Vec(0,0,0)
+        end
+    end
+    if CastInfo.hit == true then
+        CastHitPosition = (VecAdd(SelectedTransform.pos, VecScale(CastDirection, CastInfo.distance)))
+        CastHitNormal = (VecAdd(CastHitPosition, CastInfo.normal))
+    else
+        CastHitPosition = Vec(0,0,0)
+        CastHitNormal = Vec(0,0,0)
+    end
+
+    DebugWatch("CastInfo",CastInfo,false)
+    DebugWatch("CastDirection",CastDirection,false)
+    DebugWatch("CastHitPosition",CastHitPosition,false)
 end
 
 JumpState = 0
@@ -84,13 +130,15 @@ PreForceDir = Vec(0,0,0)
 Force = 0
 ForceDir = Vec(0,0,0)
 ForceDirection = Vec(0,0,0)
-ForceMultiplier = 6
+ForceMultiplierDefault = 6
+ForceMultiplier = Vec(ForceMultiplierDefault, 0, ForceMultiplierDefault)
 function JumpKit()
     local delta = GetTimeStep()
 
     local player = GetLocalPlayer()
     Up = GetPlayerUp(0)
     local playerVelocity = GetPlayerVelocity(0)
+    local playerVelocityLengthXZ = VecLength(Vec(playerVelocity[1],0,playerVelocity[3]))
     local eyeTransform = GetPlayerEyeTransform(0)
     local playerTransform = GetPlayerTransform(0)
     local baseTransform = Transform(Vec(0,0,0),playerTransform.rot)
@@ -133,8 +181,42 @@ function JumpKit()
         PreForceDir[2] = 0.0
     end
     ForceDir = Vec(0,0,0)
-    ForceDir = VecScale(ForceDirection, ForceMultiplier)
-    DebugLine(playerTransform.pos, VecAdd(playerTransform.pos,ForceDir), Orange.r, Orange.g, Orange.b, 1)
+    DebugWatch("X Velocity", playerVelocity[1], false)
+    DebugWatch("Z Velocity", playerVelocity[3], false)
+    DebugWatch("XZ Velocity Length", playerVelocityLengthXZ, false)
+    for i = 0, table.maxn(ForceMultiplier), 1 do
+        if ForceMultiplier[i] then
+            if i ~= 2 then
+                if playerVelocity[i] > 0 then
+                    if ForceDirection[i] > 0 then
+                        if playerVelocityLengthXZ > ForceMultiplierDefault+1 then
+                            ForceMultiplier[i] = 0
+                            Force = 0
+                        else
+                            ForceMultiplier[i] = ForceMultiplierDefault
+                        end
+                    else
+                        ForceMultiplier[i] = ForceMultiplierDefault
+                    end
+                elseif playerVelocity[i] < 0 then
+                    if ForceDirection[i] < 0 then
+                        if playerVelocityLengthXZ > ForceMultiplierDefault+1 then
+                            ForceMultiplier[i] = 0
+                            Force = 0
+                        else
+                            ForceMultiplier[i] = ForceMultiplierDefault
+                        end
+                    else
+                        ForceMultiplier[i] = ForceMultiplierDefault
+                    end
+                end
+            end
+        end
+    end
+    -- ForceDir = VecScale(ForceDirection, ForceMultiplier)
+    ForceDir[1] = ForceDirection[1] * ForceMultiplier[1]
+    ForceDir[3] = ForceDirection[3] * ForceMultiplier[3]
+    -- DebugLine(playerTransform.pos, VecAdd(playerTransform.pos,ForceDir), Orange.r, Orange.g, Orange.b, 1)
 
     if IsPlayerGrounded(0) == true then
         AirJumps = MaxAirJumps
@@ -200,7 +282,7 @@ function JumpKit()
     -- DebugWatch("AirJumps",AirJumps,false)
     -- DebugWatch("JumpBuffer",JumpBuffer,false)
     -- DebugWatch("JumpState",JumpState,false)
-    -- DebugWatch("ForceDir",ForceDir,false)
+    DebugWatch("ForceDir",ForceDir,false)
 end
 function server.setPlayerVelocity(playerId, playerVelocity, forceDir, force)
     local newVelocity = Vec((playerVelocity[1]*-(force-1)) + forceDir[1], (playerVelocity[2]*AirJumps) + (JumpVelocity+(AirJumps*5)), (playerVelocity[3]*-(force-1)) + forceDir[3])
@@ -209,59 +291,34 @@ function server.setPlayerVelocity(playerId, playerVelocity, forceDir, force)
     -- DebugWatch("","Applying Jumpkit boost...",false)
 end
 
-function LookForWalls()
-    LookDistance = 5
-    OriginOffset = 1 - (GetPlayerCrouch(0)/2)
-    EyeTransform = GetPlayerEyeTransform(0)
-    PlayerTransform = GetPlayerTransform(0)
-    SelectedTransform = PlayerTransform
-    SelectedTransform = Transform(Vec(SelectedTransform.pos[1], SelectedTransform.pos[2] + OriginOffset, SelectedTransform.pos[3]), SelectedTransform.rot)
-
-    IsOccupied = 0 --Whether or not player is occupied with a current shape
-    CurrentOccupant = 0
-    Forward = Vec(0, 0, -LookDistance)
-    Left = Vec(LookDistance, 0, 0)
-    Right = Vec(-LookDistance, 0, 0)
-    Back = Vec(0, 0, LookDistance)
-    LookDirection = TransformToParentPoint(SelectedTransform, Forward)
-    LeftDirection = TransformToParentPoint(SelectedTransform, Left)
-    RightDirection = TransformToParentPoint(SelectedTransform, Right)
-    BackDirection = TransformToParentPoint(SelectedTransform, Back)
-    CastDirections = {Forward,Left,Right,Back}
-    CastInfo = {hit=false, distance=0, normal=Vec(0,0,0), shape=0}
-    CastDirection = Vec(0,0,0)
-    CastHitPosition = Vec(0,0,0)
-    CastHitNormal = Vec(0,0,0)
-
-    for i = 1, table.maxn(CastDirections), 1 do
-        CastInfo.hit,CastInfo.distance,CastInfo.normal,CastInfo.shape = QueryRaycast(SelectedTransform.pos, CastDirections[i], LookDistance, 0, false)
-        if CastInfo.hit == true then
-            CastDirection = CastDirections[i]
-        else
-            CastDirection = Vec(0,0,0)
+SlideCooldownMax = 2.0
+SlideCooldown = SlideCooldownMax
+SlideReady = 0
+function Sliding()
+    if InputValue("up",0) > 0 then
+        if SlideReady ~= 2 then
+            SlideReady = 1
         end
-    end
-    if CastInfo.hit == true then
-        CastHitPosition = (VecAdd(SelectedTransform.pos, VecScale(CastDirection, CastInfo.distance)))
-        CastHitNormal = (VecAdd(CastHitPosition, CastInfo.normal))
     else
-        CastHitPosition = Vec(0,0,0)
-        CastHitNormal = Vec(0,0,0)
+        SlideReady = 0
     end
-
-    DebugWatch("CastInfo",CastInfo,false)
-    DebugWatch("CastDirection",CastDirection,false)
-    DebugWatch("CastHitPosition",CastHitPosition,false)
+    if VecLength(ForceDir) > 0 then
+        DebugWatch("ForceDir from JumpKit()",ForceDir,false)
+    end
 end
 
 FallCheckDir = Vec(0,-1,0)
+FallCheckDistanceMultiplier = 0.4
+FallCheckCastRadius = 1
 FallCheckCast = {hit=false,dist=0,normal=Vec(),shape=0}
+FallMaxVelocity = -10
+FallVelocityMultiplier = 0.99
 function FallCheck()
     local player = GetLocalPlayer()
     local playerVelocity = GetPlayerVelocity(0)
     local playerTransform = GetPlayerTransform(0)
-    if playerVelocity[2] < -10 then
-        FallCheckCast.hit,FallCheckCast.dist,FallCheckCast.normal,FallCheckCast.shape = QueryRaycast(playerTransform.pos, FallCheckDir, -playerVelocity[2]*0.4, 1, false)
+    if playerVelocity[2] < FallMaxVelocity then
+        FallCheckCast.hit,FallCheckCast.dist,FallCheckCast.normal,FallCheckCast.shape = QueryRaycast(playerTransform.pos, FallCheckDir, -playerVelocity[2]*FallCheckDistanceMultiplier, FallCheckCastRadius, false)
         if FallCheckCast.hit == true then
             ServerCall("server.preventFallDamage", player, playerVelocity)
             -- DebugWatch("","Applying Jumpkit hover...",false)
@@ -272,5 +329,5 @@ function FallCheck()
     -- DebugWatch("FallCheckCast",FallCheckCast,false)
 end
 function server.preventFallDamage(playerId, playerVelocity)
-    SetPlayerVelocity(Vec(playerVelocity[1], playerVelocity[2]*0.99, playerVelocity[3]), playerId)
+    SetPlayerVelocity(Vec(playerVelocity[1], playerVelocity[2]*FallVelocityMultiplier, playerVelocity[3]), playerId)
 end
